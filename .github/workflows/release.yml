@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-and-upload:
+    name: Build and Upload
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: audiothek_quickplay
+            asset_name_suffix: linux-x86_64
+            archive_format: tar.gz
+
+          - os: windows-latest
+            target: x86_64-pc-windows-gnu
+            artifact_name: audiothek_quickplay.exe
+            asset_name_suffix: windows-x86_64
+            archive_format: zip
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install ALSA development libraries (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
+
+      - name: Build binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare package (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          ASSET_FILENAME="audiothek-quickplay-${{ matrix.asset_name_suffix }}.tar.gz"
+          mkdir -p staging
+          cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} staging/
+          cp podcasts.json staging/
+          (cd staging && tar -czf ../${ASSET_FILENAME} *)
+          echo "ASSET_PATH=${ASSET_FILENAME}" >> $GITHUB_ENV
+
+      - name: Prepare package (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $assetFilename = "audiothek-quickplay-${{ matrix.asset_name_suffix }}.zip"
+          New-Item -ItemType Directory -Force -Path staging
+          Copy-Item -Path target\${{ matrix.target }}\release\${{ matrix.artifact_name }} -Destination staging\
+          Copy-Item -Path podcasts.json -Destination staging\
+          Compress-Archive -Path staging\* -DestinationPath $assetFilename
+          echo "ASSET_PATH=$assetFilename" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ASSET_PATH }}
